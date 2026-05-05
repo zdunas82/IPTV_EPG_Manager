@@ -287,6 +287,11 @@ class EPGWorker(object):
     def __init__(self):
         self._lock = threading.Lock()
         self.running = False
+        self._active_log_cb = None  # callback aktualnie działającego zadania
+
+    def attach_log(self, log_cb):
+        """Podłącza callback logu do działającego zadania w tle."""
+        self._active_log_cb = log_cb
 
     def _selected_sources(self):
         source_id = config.plugins.IPTVEPGManager.source_select.value
@@ -459,95 +464,92 @@ class EPGWorker(object):
 
     def run_import(self, callback_log=None, silent=False):
         if self.running:
-            if callback_log:
+            # Jeśli zadanie działa w tle bez logu — podłącz GUI
+            if callback_log and self._active_log_cb is None:
+                self._active_log_cb = callback_log
+                callback_log(">>> Podłączono do działającego importu w tle...")
+            elif callback_log:
                 callback_log(_("busy"))
             return False
         if not self._lock.acquire(False):
             if callback_log:
                 callback_log(_("busy"))
             return False
+        self._active_log_cb = callback_log
         self.running = True
         try:
             return self._run_import_core(callback_log=callback_log, silent=silent)
         finally:
             self.running = False
+            self._active_log_cb = None
             try:
                 self._lock.release()
             except Exception:
                 pass
 
+    def _log(self, message):
+        cb = self._active_log_cb
+        if cb:
+            try:
+                cb(message)
+            except Exception:
+                pass
+
     def _run_import_core(self, callback_log=None, silent=False):
-        if callback_log:
-            callback_log(_("scan_start"))
+        self._log(_("scan_start"))
         scan = scan_bouquet_services()
         iptv_services = scan.get("iptv", [])
         sat_services = scan.get("sat_services", [])
         skipped = scan.get("skipped", 0)
         services_signature = scan.get("services_signature", "")
-        if callback_log:
-            callback_log(_("scan_done").format(iptv=len(iptv_services), sat=len(sat_services), skipped=skipped))
+        self._log(_("scan_done").format(iptv=len(iptv_services), sat=len(sat_services), skipped=skipped))
         if not iptv_services:
-            if callback_log:
-                callback_log(_("nothing_to_do"))
+            self._log(_("nothing_to_do"))
             return False
 
-        xml_path, source_key, _url = self._download_selected_source(callback_log)
+        xml_path, source_key, _url = self._download_selected_source(self._log)
         if not xml_path:
-            if callback_log:
-                callback_log(_("download_fail"))
+            self._log(_("download_fail"))
             return False
 
         import_days = int(config.plugins.IPTVEPGManager.import_days.value or "3")
         injector = EPGInjector()
 
-        if callback_log:
-            callback_log(_("clone_start"))
-        clone_stats = clone_sat_to_iptv(injector, iptv_services, sat_services, days_ahead=import_days, log_cb=callback_log)
+        self._log(_("clone_start"))
+        clone_stats = clone_sat_to_iptv(injector, iptv_services, sat_services, days_ahead=import_days, log_cb=self._log)
         cloned_refs = clone_stats.get("injected_refs", set())
-        if callback_log:
-            callback_log(_("clone_done").format(clone_stats.get("channels", 0)))
+        self._log(_("clone_done").format(clone_stats.get("channels", 0)))
 
         remaining_services = [service for service in iptv_services if service.get("full_ref") not in cloned_refs]
         mapping_path = config.plugins.IPTVEPGManager.mapping_file.value
         mapping = self._load_mapping_cache(mapping_path, services_signature, source_key)
 
         if mapping:
-            if callback_log:
-                callback_log(_("mapping_cache"))
+            self._log(_("mapping_cache"))
         else:
-            if callback_log:
-                callback_log(_("mapping_start"))
-            mapper = AutoMapper(log_callback=callback_log)
+            self._log(_("mapping_start"))
+            mapper = AutoMapper(log_callback=self._log)
             mapping, stats = mapper.generate_mapping(remaining_services, xml_path)
             if mapping:
                 self._save_mapping_cache(mapping_path, mapping, services_signature, source_key, stats)
-                if callback_log:
-                    callback_log(_("mapping_saved").format(groups=stats.get("groups", 0), xml=stats.get("xml_ids", 0)))
+                self._log(_("mapping_saved").format(groups=stats.get("groups", 0), xml=stats.get("xml_ids", 0)))
 
         if not mapping:
             config.plugins.IPTVEPGManager.last_update.value = str(int(time.time()))
             save_plugin_config()
-            if callback_log:
-                callback_log(_("mapping_empty"))
-                callback_log(_("import_done").format(sat=clone_stats.get("channels", 0), xml_channels=0, xml_events=0))
+            self._log(_("mapping_empty"))
+            self._log(_("import_done").format(sat=clone_stats.get("channels", 0), xml_channels=0, xml_events=0))
             return True
 
-        if callback_log:
-            callback_log(_("import_start"))
+        self._log(_("import_start"))
         parser = EPGParser(xml_path)
         xml_channels = set()
         xml_events = 0
-        imported_refs = set(cloned_refs)
         buffer_counter = 0
 
-        def parser_progress(message):
-            if callback_log:
-                callback_log(message)
-
-        for service_ref, payload, channel_id in parser.iter_events(mapping, days_ahead=import_days, progress_cb=parser_progress):
+        for service_ref, payload, channel_id in parser.iter_events(mapping, days_ahead=import_days, progress_cb=self._log):
             injector.add_event(service_ref, payload)
             xml_channels.add(channel_id)
-            imported_refs.add(service_ref)
             xml_events += 1
             buffer_counter += 1
             if buffer_counter >= 4000:
@@ -557,12 +559,11 @@ class EPGWorker(object):
         injector.commit()
         config.plugins.IPTVEPGManager.last_update.value = str(int(time.time()))
         save_plugin_config()
-        if callback_log:
-            callback_log(_("import_done").format(
-                sat=clone_stats.get("channels", 0),
-                xml_channels=len(xml_channels),
-                xml_events=xml_events,
-            ))
+        self._log(_("import_done").format(
+            sat=clone_stats.get("channels", 0),
+            xml_channels=len(xml_channels),
+            xml_events=xml_events,
+        ))
         if not silent and ACTIVE_SESSION:
             try:
                 reactor.callFromThread(
@@ -691,7 +692,9 @@ class IPTV_EPG_Config(Screen, ConfigListScreen):
     def start_import_gui(self):
         self.save_settings()
         if self.worker.running:
-            self.gui_update_log(_("busy"))
+            # Podłącz GUI do działającego zadania w tle zamiast blokować
+            self.worker.attach_log(self.log)
+            self.gui_update_log(">>> Podłączono do importu działającego w tle...")
             return
         self["status"].setText(_("status_ready"))
 
@@ -761,7 +764,8 @@ def StartSession(**kwargs):
     global AUTOUPDATE_STARTED
     if not AUTOUPDATE_STARTED:
         AUTOUPDATE_STARTED = True
-        reactor.callLater(60, AutoUpdateCheck)
+        # Opóźnienie 5 minut — żeby użytkownik mógł ręcznie uruchomić import bez konfliktu
+        reactor.callLater(300, AutoUpdateCheck)
 
 
 def main(session, **kwargs):
