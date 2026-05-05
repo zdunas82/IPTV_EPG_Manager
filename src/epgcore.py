@@ -435,74 +435,52 @@ def download_file(url, target_path, timeout=120, retries=2, log_cb=None):
 
 
 def update_plugin_package(log_cb=None):
-    commands = []
-    local_candidates = [
-        "/tmp/iptvepgmgr_latest.ipk",
-        "/tmp/iptvepgmgr_update.ipk",
-        "/tmp/%s.ipk" % PACKAGE_NAME,
-        "/media/hdd/iptvepgmgr_latest.ipk",
-    ]
-    for candidate in local_candidates:
-        if os.path.exists(candidate):
-            commands.append(["opkg", "install", "--force-reinstall", "--force-overwrite", candidate])
-    commands.extend([
-        ["opkg", "update"],
-        ["opkg", "install", "--force-reinstall", "--force-overwrite", PACKAGE_NAME],
-        ["opkg", "upgrade", PACKAGE_NAME],
-    ])
-    for command in commands:
-        try:
-            result = subprocess.run(command, capture_output=True, timeout=600, text=True)
-            output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-            if log_cb:
-                log_cb("$ %s" % " ".join(command))
-                if output:
-                    log_cb(output[-600:])
-            if result.returncode == 0:
-                return True, output or "OK"
-        except Exception as error:
-            if log_cb:
-                log_cb("Błąd aktualizacji: %s" % error)
-            log_message("update_plugin_package error: %s" % error)
-
+    """Aktualizuje wtyczkę pobierając installer.sh z GitHub."""
     installer_path = os.path.join(TMP_DIR, "installer.sh")
     os.makedirs(TMP_DIR, exist_ok=True)
-    download_commands = [
-        ["wget", "--no-check-certificate", "-O", installer_path, GITHUB_INSTALLER_URL],
-        ["curl", "-k", "-L", "-o", installer_path, GITHUB_INSTALLER_URL],
-    ]
-    for command in download_commands:
+
+    if log_cb:
+        log_cb("Pobieranie instalatora z GitHub...")
+
+    downloaded = False
+    for command in [
+        ["wget", "--no-check-certificate", "-q", "-O", installer_path, GITHUB_INSTALLER_URL],
+        ["curl", "-k", "-L", "-s", "-o", installer_path, GITHUB_INSTALLER_URL],
+    ]:
         try:
             result = subprocess.run(command, capture_output=True, timeout=180, text=True)
-            output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-            if log_cb:
-                log_cb("$ %s" % " ".join(command))
-                if output:
-                    log_cb(output[-600:])
-            if result.returncode == 0 and os.path.exists(installer_path):
+            if result.returncode == 0 and os.path.exists(installer_path) and os.path.getsize(installer_path) > 128:
+                downloaded = True
                 break
         except Exception as error:
-            if log_cb:
-                log_cb("Błąd pobierania instalatora: %s" % error)
-    if os.path.exists(installer_path):
-        try:
-            os.chmod(installer_path, 0o755)
-            result = subprocess.run(["/bin/sh", installer_path], capture_output=True, timeout=1800, text=True)
-            output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-            if log_cb:
-                log_cb("$ /bin/sh %s" % installer_path)
-                if output:
-                    log_cb(output[-1200:])
-            if result.returncode == 0:
-                return True, output or "OK"
-            return False, output or "Instalator zakończył się błędem"
-        except Exception as error:
-            if log_cb:
-                log_cb("Błąd uruchomienia instalatora: %s" % error)
-            log_message("update_plugin_package installer error: %s" % error)
-            return False, str(error)
+            log_message("installer download error: %s" % error)
 
-    return False, "Brak pakietu w feedzie, lokalnego IPK ani instalatora."
+    if not downloaded:
+        # Fallback: urllib
+        try:
+            _download_via_urllib(GITHUB_INSTALLER_URL, installer_path, timeout=60)
+            if os.path.exists(installer_path) and os.path.getsize(installer_path) > 128:
+                downloaded = True
+        except Exception as error:
+            log_message("installer urllib error: %s" % error)
+
+    if not downloaded:
+        return False, "Nie udało się pobrać instalatora z GitHub."
+
+    if log_cb:
+        log_cb("Uruchamianie instalatora...")
+    try:
+        os.chmod(installer_path, 0o755)
+        result = subprocess.run(["/bin/sh", installer_path], capture_output=True, timeout=1800, text=True)
+        output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+        if log_cb and output:
+            log_cb(output[-1200:])
+        if result.returncode == 0:
+            return True, output or "OK"
+        return False, output or "Instalator zakończył się błędem"
+    except Exception as error:
+        log_message("update_plugin_package error: %s" % error)
+        return False, str(error)
 
 
 def validate_xmltv_file(path):

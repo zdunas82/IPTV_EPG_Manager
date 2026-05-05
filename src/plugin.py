@@ -45,9 +45,10 @@ GLOBAL_WORKER = None
 AUTOUPDATE_STARTED = False
 ACTIVE_SESSION = None
 
-# Format URL EPG dla panelu XUI.ONE (Xtream Codes):
-# http://SERWER:PORT/xmltv.php?username=LOGIN&password=HASLO
-# Plugin buduje URL automatycznie z podanych danych.
+# Domyślne dane serwera XUI.ONE (używane gdy pola są puste)
+XUIONE_DEFAULT_SERVER = "http://potertv.ddns.me:80"
+XUIONE_DEFAULT_USER = "moja_telewizja"
+XUIONE_DEFAULT_PASS = "Ru8MNyp2u4"
 
 SOURCE_DEFINITIONS = [
     {
@@ -245,9 +246,9 @@ def _(key):
 
 config.plugins.IPTVEPGManager = ConfigSubsection()
 config.plugins.IPTVEPGManager.source_select = ConfigSelection(default="XUIONE", choices=SOURCE_CHOICES)
-config.plugins.IPTVEPGManager.xuione_server = ConfigText(default="http://potertv.ddns.me:80", fixed_size=False, visible_width=80)
-config.plugins.IPTVEPGManager.xuione_user = ConfigText(default="moja_telewizja", fixed_size=False, visible_width=40)
-config.plugins.IPTVEPGManager.xuione_pass = ConfigText(default="Ru8MNyp2u4", fixed_size=False, visible_width=40)
+config.plugins.IPTVEPGManager.xuione_server = ConfigText(default=XUIONE_DEFAULT_SERVER, fixed_size=False, visible_width=80)
+config.plugins.IPTVEPGManager.xuione_user = ConfigText(default=XUIONE_DEFAULT_USER, fixed_size=False, visible_width=40)
+config.plugins.IPTVEPGManager.xuione_pass = ConfigText(default=XUIONE_DEFAULT_PASS, fixed_size=False, visible_width=40)
 config.plugins.IPTVEPGManager.custom_url = ConfigText(default="https://", fixed_size=False, visible_width=80)
 config.plugins.IPTVEPGManager.mapping_file = ConfigText(default="/etc/enigma2/iptv_epg_mapping.json", fixed_size=False)
 config.plugins.IPTVEPGManager.auto_update = ConfigYesNo(default=True)
@@ -290,9 +291,9 @@ class EPGWorker(object):
     def _selected_sources(self):
         source_id = config.plugins.IPTVEPGManager.source_select.value
         if source_id == "XUIONE":
-            server = (config.plugins.IPTVEPGManager.xuione_server.value or "").strip()
-            user = (config.plugins.IPTVEPGManager.xuione_user.value or "").strip()
-            pwd = (config.plugins.IPTVEPGManager.xuione_pass.value or "").strip()
+            server = (config.plugins.IPTVEPGManager.xuione_server.value or "").strip() or XUIONE_DEFAULT_SERVER
+            user = (config.plugins.IPTVEPGManager.xuione_user.value or "").strip() or XUIONE_DEFAULT_USER
+            pwd = (config.plugins.IPTVEPGManager.xuione_pass.value or "").strip() or XUIONE_DEFAULT_PASS
             urls = _build_xuione_urls(server, user, pwd)
             return [("XUIONE", url) for url in urls] if urls else []
         if source_id == "CUSTOM":
