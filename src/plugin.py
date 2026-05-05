@@ -47,8 +47,8 @@ ACTIVE_SESSION = None
 
 # Domyślne dane serwera XUI.ONE (używane gdy pola są puste)
 XUIONE_DEFAULT_SERVER = "http://potertv.ddns.me:80"
-XUIONE_DEFAULT_USER = "moja_telewizja"
-XUIONE_DEFAULT_PASS = "Ru8MNyp2u4"
+XUIONE_DEFAULT_USER = ""
+XUIONE_DEFAULT_PASS = ""
 
 SOURCE_DEFINITIONS = [
     {
