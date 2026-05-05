@@ -45,11 +45,9 @@ GLOBAL_WORKER = None
 AUTOUPDATE_STARTED = False
 ACTIVE_SESSION = None
 
-# Format URL EPG dla panelu XUI.ONE:
-# http://TWOJ_SERWER/xmltv.php  (bez loginu/hasła - publiczny endpoint panelu)
-# lub http://TWOJ_SERWER:PORT/xmltv.php
-# Użytkownik konfiguruje adres serwera w polu "Serwer XUI.ONE"
-# a plugin automatycznie buduje pełny URL EPG.
+# Format URL EPG dla panelu XUI.ONE (Xtream Codes):
+# http://SERWER:PORT/xmltv.php?username=LOGIN&password=HASLO
+# Plugin buduje URL automatycznie z podanych danych.
 
 SOURCE_DEFINITIONS = [
     {
@@ -182,6 +180,8 @@ TR = {
     },
     "source_label": {"pl": "Wybierz źródło EPG:", "en": "Select EPG source:"},
     "xuione_label": {"pl": "   >> Adres serwera XUI.ONE (np. http://serwer.pl:8080):", "en": "   >> XUI.ONE server address (e.g. http://server.com:8080):"},
+    "xuione_user_label": {"pl": "   >> Login użytkownika XUI.ONE:", "en": "   >> XUI.ONE username:"},
+    "xuione_pass_label": {"pl": "   >> Hasło użytkownika XUI.ONE:", "en": "   >> XUI.ONE password:"},
     "custom_label": {"pl": "   >> Własny URL XML/XML.GZ:", "en": "   >> Custom XML/XML.GZ URL:"},
     "map_file_label": {"pl": "Plik cache mapowania:", "en": "Mapping cache file:"},
     "autoupdate_label": {"pl": "Auto-import co 24h:", "en": "Auto-import every 24h:"},
@@ -246,6 +246,8 @@ def _(key):
 config.plugins.IPTVEPGManager = ConfigSubsection()
 config.plugins.IPTVEPGManager.source_select = ConfigSelection(default="XUIONE", choices=SOURCE_CHOICES)
 config.plugins.IPTVEPGManager.xuione_server = ConfigText(default="http://potertv.ddns.me:80", fixed_size=False, visible_width=80)
+config.plugins.IPTVEPGManager.xuione_user = ConfigText(default="", fixed_size=False, visible_width=40)
+config.plugins.IPTVEPGManager.xuione_pass = ConfigText(default="", fixed_size=False, visible_width=40)
 config.plugins.IPTVEPGManager.custom_url = ConfigText(default="https://", fixed_size=False, visible_width=80)
 config.plugins.IPTVEPGManager.mapping_file = ConfigText(default="/etc/enigma2/iptv_epg_mapping.json", fixed_size=False)
 config.plugins.IPTVEPGManager.auto_update = ConfigYesNo(default=True)
@@ -261,18 +263,23 @@ def save_plugin_config():
         pass
 
 
-def _build_xuione_urls(server_base):
-    """Buduje listę możliwych URL EPG dla serwera XUI.ONE."""
+def _build_xuione_urls(server_base, username, password):
+    """Buduje listę URL EPG dla serwera XUI.ONE / Xtream Codes."""
     base = (server_base or "").rstrip("/")
     if not base or base in ("http://", "https://"):
         return []
-    # XUI.ONE / Xtream Codes EPG endpoints
-    return [
-        base + "/epg.xml",
-        base + "/epg.xml.gz",
-        base + "/xmltv.php",
-        base + "/epg/epg.xml",
-    ]
+    user = (username or "").strip()
+    pwd = (password or "").strip()
+    urls = []
+    # Z loginem i hasłem (standardowy endpoint Xtream Codes / XUI.ONE)
+    if user and pwd:
+        urls.append("%s/xmltv.php?username=%s&password=%s" % (base, user, pwd))
+        urls.append("%s/get.php?username=%s&password=%s&type=xmltv&output=ts" % (base, user, pwd))
+    # Bez loginu (niektóre serwery udostępniają publiczny EPG)
+    urls.append(base + "/xmltv.php")
+    urls.append(base + "/epg.xml")
+    urls.append(base + "/epg.xml.gz")
+    return urls
 
 
 class EPGWorker(object):
@@ -284,7 +291,9 @@ class EPGWorker(object):
         source_id = config.plugins.IPTVEPGManager.source_select.value
         if source_id == "XUIONE":
             server = (config.plugins.IPTVEPGManager.xuione_server.value or "").strip()
-            urls = _build_xuione_urls(server)
+            user = (config.plugins.IPTVEPGManager.xuione_user.value or "").strip()
+            pwd = (config.plugins.IPTVEPGManager.xuione_pass.value or "").strip()
+            urls = _build_xuione_urls(server, user, pwd)
             return [("XUIONE", url) for url in urls] if urls else []
         if source_id == "CUSTOM":
             url = (config.plugins.IPTVEPGManager.custom_url.value or "").strip()
@@ -633,6 +642,8 @@ class IPTV_EPG_Config(Screen, ConfigListScreen):
         ]
         if config.plugins.IPTVEPGManager.source_select.value == "XUIONE":
             self.list.append(getConfigListEntry(_("xuione_label"), config.plugins.IPTVEPGManager.xuione_server))
+            self.list.append(getConfigListEntry(_("xuione_user_label"), config.plugins.IPTVEPGManager.xuione_user))
+            self.list.append(getConfigListEntry(_("xuione_pass_label"), config.plugins.IPTVEPGManager.xuione_pass))
         elif config.plugins.IPTVEPGManager.source_select.value == "CUSTOM":
             self.list.append(getConfigListEntry(_("custom_label"), config.plugins.IPTVEPGManager.custom_url))
         self.list.append(getConfigListEntry(_("map_file_label"), config.plugins.IPTVEPGManager.mapping_file))
