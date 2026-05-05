@@ -311,14 +311,26 @@ class EPGWorker(object):
         total = len(sources)
         for idx, (source_key, url) in enumerate(sources):
             if log_cb:
-                log_cb(_("download_try").format(idx + 1, total) + ": %s" % url)
+                log_cb("--- Źródło %d/%d ---" % (idx + 1, total))
+                log_cb("URL: %s" % url)
+                log_cb("Łączenie z serwerem...")
             target = self._temp_target_for_url(url)
-            if download_file(url, target, timeout=180, retries=2, log_cb=log_cb) and validate_xmltv_file(target):
-                config.plugins.IPTVEPGManager.last_source.value = url
-                save_plugin_config()
+            ok = download_file(url, target, timeout=180, retries=2, log_cb=log_cb)
+            if ok:
                 if log_cb:
-                    log_cb(_("download_ok").format(url))
-                return target, source_key, url
+                    log_cb("Weryfikacja pliku XML/GZ...")
+                if validate_xmltv_file(target):
+                    config.plugins.IPTVEPGManager.last_source.value = url
+                    save_plugin_config()
+                    if log_cb:
+                        log_cb("Plik EPG poprawny. Kontynuuję...")
+                    return target, source_key, url
+                else:
+                    if log_cb:
+                        log_cb("Plik uszkodzony lub nie jest XML. Próbuję następne źródło...")
+            else:
+                if log_cb:
+                    log_cb("Nie udało się pobrać. Próbuję następne źródło...")
         return None, None, None
 
     def _load_mapping_cache(self, mapping_path, services_signature, source_key):

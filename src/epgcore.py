@@ -361,35 +361,70 @@ def _download_via_command(command, timeout):
         return False
 
 
-def _download_via_urllib(url, target_path, timeout):
+def _download_via_urllib(url, target_path, timeout, log_cb=None):
     request = urllib.request.Request(url, headers={"User-Agent": "IPTVEPGManager/1.0"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
+        total_bytes = 0
+        try:
+            content_length = int(response.headers.get("Content-Length") or 0)
+        except Exception:
+            content_length = 0
+        downloaded = 0
+        last_reported_mb = -1
         with open(target_path, "wb") as handle:
             while True:
                 chunk = response.read(1024 * 128)
                 if not chunk:
                     break
                 handle.write(chunk)
+                downloaded += len(chunk)
+                current_mb = downloaded // (1024 * 1024)
+                if log_cb and current_mb != last_reported_mb:
+                    last_reported_mb = current_mb
+                    if content_length > 0:
+                        pct = int(downloaded * 100 / content_length)
+                        total_mb = content_length / (1024 * 1024)
+                        log_cb("Pobieranie: %.1f MB / %.1f MB (%d%%)" % (current_mb, total_mb, pct))
+                    else:
+                        log_cb("Pobieranie: %.1f MB..." % current_mb)
     return True
 
 
 def download_file(url, target_path, timeout=120, retries=2, log_cb=None):
     ensure_temp_dir()
     for attempt in range(retries):
+        if attempt > 0 and log_cb:
+            log_cb("Ponowna próba %d/%d..." % (attempt + 1, retries))
         try:
             if os.path.exists(target_path):
                 os.remove(target_path)
         except Exception:
             pass
         try:
+            ok = _download_via_urllib(url, target_path, timeout, log_cb=log_cb)
+            if ok and os.path.exists(target_path) and os.path.getsize(target_path) > 256:
+                size_mb = os.path.getsize(target_path) / (1024 * 1024)
+                if log_cb:
+                    log_cb("Pobrano: %.1f MB" % size_mb)
+                return True
+        except Exception as error:
+            log_message("download_file urllib error (%s): %s" % (url, error))
+            if log_cb:
+                log_cb("urllib błąd: %s — próba przez wget/curl..." % error)
+        try:
             ok = False
             if shutil.which("curl"):
+                if log_cb:
+                    log_cb("Pobieranie przez curl...")
                 ok = _download_via_command(["curl", "-f", "-L", "-k", "--connect-timeout", "20", "--max-time", str(timeout), "-A", "IPTVEPGManager/1.0", "-o", target_path, url], timeout)
             if not ok and shutil.which("wget"):
+                if log_cb:
+                    log_cb("Pobieranie przez wget...")
                 ok = _download_via_command(["wget", "-q", "-O", target_path, "--timeout=%s" % timeout, url], timeout)
-            if not ok:
-                ok = _download_via_urllib(url, target_path, timeout)
             if ok and os.path.exists(target_path) and os.path.getsize(target_path) > 256:
+                size_mb = os.path.getsize(target_path) / (1024 * 1024)
+                if log_cb:
+                    log_cb("Pobrano: %.1f MB" % size_mb)
                 return True
         except Exception as error:
             log_message("download_file error (%s): %s" % (url, error))
